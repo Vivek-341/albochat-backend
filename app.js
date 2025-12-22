@@ -1,18 +1,28 @@
-const mongoose = require('mongoose');
-const bodyParser = require('body-parser');
-const cors = require('cors');
 const express = require('express');
+const http = require('http');
+const cors = require('cors');
 require('dotenv').config();
-require('./db/db');
+
+const connectDB = require('./config/db');
+const authRoutes = require('./routes/auth.routes');
+const roomRoutes = require('./routes/room.routes');
+const messageRoutes = require('./routes/message.routes');
 
 const app = express();
+const server = http.createServer(app);
 
-app.use(cors());
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
+app.use(express.json());
+app.use(cors({ origin: process.env.CORS_ORIGIN }));
 
-const port = process.env.PORT || 5000;
+connectDB();
 
-app.listen(port, () => {
-    console.log(`Server is running on port: ${port}`);
-});
+app.use('/api/auth', authRoutes);
+app.use('/api/rooms', roomRoutes);
+app.use('/api/messages', messageRoutes);
+
+app.get('/health', (req, res) => res.json({ ok: true }));
+
+const PORT = process.env.PORT || 5000;
+server.listen(PORT, () =>
+  console.log(`Server running on port ${PORT}`)
+);
