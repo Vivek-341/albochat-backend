@@ -1,5 +1,6 @@
 // controllers/message-controller.js
 const Message = require('../models/message-model');
+const Room = require('../models/room-model');
 
 exports.sendMessage = async (req, res) => {
   try {
@@ -9,10 +10,24 @@ exports.sendMessage = async (req, res) => {
       return res.status(400).json({ message: 'roomId and content are required' });
     }
 
+    // Get room to check if it's public
+    const room = await Room.findById(roomId);
+    if (!room) {
+      return res.status(404).json({ message: 'Room not found' });
+    }
+
+    // Calculate expiration for public rooms (24 hours from now)
+    let expiresAt = null;
+    if (room.isPublic) {
+      expiresAt = new Date();
+      expiresAt.setHours(expiresAt.getHours() + 24); // 24 hours from now
+    }
+
     const message = await Message.create({
       roomId,
       senderId: req.user._id,
-      content
+      content,
+      expiresAt // Will be null for private rooms, set for public rooms
     });
 
     // Populate sender info before sending response
@@ -30,7 +45,17 @@ exports.getMessages = async (req, res) => {
   try {
     const { roomId } = req.params;
 
-    const messages = await Message.find({ roomId })
+    // Only fetch messages that haven't expired
+    // MongoDB TTL will delete expired messages, but we add this as extra safety
+    const now = new Date();
+
+    const messages = await Message.find({
+      roomId,
+      $or: [
+        { expiresAt: null }, // Private room messages (no expiration)
+        { expiresAt: { $gt: now } } // Public room messages not yet expired
+      ]
+    })
       .populate('senderId', 'username email')
       .sort({ createdAt: 1 }) // Ascending order (oldest first)
       .limit(100);

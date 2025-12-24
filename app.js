@@ -7,6 +7,7 @@ const cors = require('cors');
 const { Server } = require('socket.io');
 
 const connectDB = require('./db/db');
+const seedDefaultRooms = require('./utils/seedDefaultRooms');
 
 // Routes
 const authRoutes = require('./routes/auth-routes');
@@ -18,6 +19,7 @@ const socketAuth = require('./middleware/socketAuth');
 
 // Models (used inside socket events)
 const Message = require('./models/message-model');
+const Room = require('./models/room-model');
 
 const app = express();
 const server = http.createServer(app);
@@ -34,7 +36,10 @@ app.use(cors({
 /* =======================
    Database Connection
 ======================= */
-connectDB();
+connectDB().then(() => {
+  // Seed default public rooms after DB connection
+  seedDefaultRooms();
+});
 
 /* =======================
    REST API Routes
@@ -93,11 +98,26 @@ io.on('connection', (socket) => {
         return;
       }
 
+      // Get room to check if it's public
+      const room = await Room.findById(roomId);
+      if (!room) {
+        console.error('Room not found');
+        return;
+      }
+
+      // Calculate expiration for public rooms (24 hours from now)
+      let expiresAt = null;
+      if (room.isPublic) {
+        expiresAt = new Date();
+        expiresAt.setHours(expiresAt.getHours() + 24);
+      }
+
       // Create message
       const message = await Message.create({
         roomId,
         senderId: socket.userId,
-        content
+        content,
+        expiresAt
       });
 
       // Populate sender info before emitting
@@ -107,7 +127,7 @@ io.on('connection', (socket) => {
       // Emit to all users in the room (including sender)
       io.to(roomId).emit('new_message', populatedMessage);
 
-      console.log(`💬 Message sent in room ${roomId} by ${socket.user.username}`);
+      console.log(`💬 Message sent in room ${roomId} by ${socket.user.username}${room.isPublic ? ' (expires in 24h)' : ''}`);
     } catch (err) {
       console.error('Message send error:', err.message);
       socket.emit('error', { message: 'Failed to send message' });

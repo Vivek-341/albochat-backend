@@ -1,3 +1,4 @@
+// models/room-model.js
 const mongoose = require('mongoose');
 
 const roomSchema = new mongoose.Schema(
@@ -5,9 +6,15 @@ const roomSchema = new mongoose.Schema(
     name: String,
     type: { type: String, enum: ['dm', 'group'], required: true },
     members: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
-    admin: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
+    admin: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    isPublic: { type: Boolean, default: true },
+    password: { type: String }, // Hashed password for private rooms
+    isDefault: { type: Boolean, default: false } // For default public rooms
   },
   { timestamps: true }
 );
+
+// Index for faster queries
+roomSchema.index({ isPublic: 1, isDefault: 1 });
 
 module.exports = mongoose.model('Room', roomSchema);
