@@ -1,3 +1,4 @@
+// app.js
 require('dotenv').config();
 
 const express = require('express');
@@ -5,18 +6,18 @@ const http = require('http');
 const cors = require('cors');
 const { Server } = require('socket.io');
 
-const connectDB = require('./config/db');
+const connectDB = require('./db/db');
 
 // Routes
-const authRoutes = require('./routes/auth.routes');
-const roomRoutes = require('./routes/room.routes');
-const messageRoutes = require('./routes/message.routes');
+const authRoutes = require('./routes/auth-routes');
+const roomRoutes = require('./routes/room-routes');
+const messageRoutes = require('./routes/message-routes');
 
 // Socket auth middleware
 const socketAuth = require('./middleware/socketAuth');
 
 // Models (used inside socket events)
-const Message = require('./models/message.model');
+const Message = require('./models/message-model');
 
 const app = express();
 const server = http.createServer(app);
@@ -25,7 +26,10 @@ const server = http.createServer(app);
    Express Middlewares
 ======================= */
 app.use(express.json());
-app.use(cors({ origin: process.env.CORS_ORIGIN }));
+app.use(cors({
+  origin: process.env.CORS_ORIGIN || 'http://localhost:4200',
+  credentials: true
+}));
 
 /* =======================
    Database Connection
@@ -40,7 +44,7 @@ app.use('/api/rooms', roomRoutes);
 app.use('/api/messages', messageRoutes);
 
 app.get('/health', (req, res) => {
-  res.json({ ok: true });
+  res.json({ ok: true, message: 'Server is running' });
 });
 
 /* =======================
@@ -48,8 +52,9 @@ app.get('/health', (req, res) => {
 ======================= */
 const io = new Server(server, {
   cors: {
-    origin: process.env.CORS_ORIGIN,
-    methods: ['GET', 'POST']
+    origin: process.env.CORS_ORIGIN || 'http://localhost:4200',
+    methods: ['GET', 'POST'],
+    credentials: true
   }
 });
 
@@ -60,54 +65,76 @@ io.use(socketAuth);
    Socket Events
 ======================= */
 io.on('connection', (socket) => {
-  console.log(`Socket connected: ${socket.user.username}`);
+  console.log(`✅ Socket connected: ${socket.user.username} (${socket.userId})`);
 
   // Mark user online
   socket.user.isOnline = true;
-  socket.user.save();
+  socket.user.save().catch(err => console.error('Error updating user online status:', err));
 
   /* Join a room */
   socket.on('join_room', ({ roomId }) => {
+    if (!roomId) return;
     socket.join(roomId);
+    console.log(`📥 ${socket.user.username} joined room: ${roomId}`);
   });
 
   /* Leave a room */
   socket.on('leave_room', ({ roomId }) => {
+    if (!roomId) return;
     socket.leave(roomId);
+    console.log(`📤 ${socket.user.username} left room: ${roomId}`);
   });
 
   /* Send message */
   socket.on('send_message', async ({ roomId, content }) => {
     try {
-      if (!roomId || !content) return;
+      if (!roomId || !content) {
+        console.error('Missing roomId or content');
+        return;
+      }
 
+      // Create message
       const message = await Message.create({
         roomId,
         senderId: socket.userId,
         content
       });
 
-      io.to(roomId).emit('new_message', message);
+      // Populate sender info before emitting
+      const populatedMessage = await Message.findById(message._id)
+        .populate('senderId', 'username email');
+
+      // Emit to all users in the room (including sender)
+      io.to(roomId).emit('new_message', populatedMessage);
+
+      console.log(`💬 Message sent in room ${roomId} by ${socket.user.username}`);
     } catch (err) {
       console.error('Message send error:', err.message);
+      socket.emit('error', { message: 'Failed to send message' });
     }
   });
 
   /* Disconnect */
   socket.on('disconnect', async () => {
-    socket.user.isOnline = false;
-    socket.user.lastSeen = new Date();
-    await socket.user.save();
+    try {
+      socket.user.isOnline = false;
+      socket.user.lastSeen = new Date();
+      await socket.user.save();
 
-    console.log(`Socket disconnected: ${socket.user.username}`);
+      console.log(`❌ Socket disconnected: ${socket.user.username}`);
+    } catch (err) {
+      console.error('Error updating user offline status:', err);
+    }
   });
 });
 
 /* =======================
    Server Start
 ======================= */
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`📡 Socket.IO enabled`);
+  console.log(`🌐 CORS origin: ${process.env.CORS_ORIGIN || 'http://localhost:4200'}`);
 });

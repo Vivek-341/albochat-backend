@@ -1,30 +1,69 @@
+// controllers/auth-controller.js
 const bcrypt = require('bcryptjs');
-const User = require('../models/user.model');
+const User = require('../models/user-model');
 const generateToken = require('../utils/generateToken');
 
 exports.register = async (req, res) => {
-  const { username, email, password } = req.body;
-  const hashedPassword = await bcrypt.hash(password, 10);
+  try {
+    const { username, email, password } = req.body;
 
-  const user = await User.create({
-    username,
-    email,
-    password: hashedPassword
-  });
+    // Check if user already exists
+    const existingUser = await User.findOne({ $or: [{ email }, { username }] });
+    if (existingUser) {
+      return res.status(400).json({
+        message: existingUser.email === email ? 'Email already exists' : 'Username already exists'
+      });
+    }
 
-  res.json({ token: generateToken(user._id) });
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const user = await User.create({
+      username,
+      email,
+      password: hashedPassword
+    });
+
+    const token = generateToken(user._id);
+
+    res.status(201).json({
+      token,
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email
+      }
+    });
+  } catch (error) {
+    console.error('Registration error:', error);
+    res.status(500).json({ message: 'Server error during registration' });
+  }
 };
 
 exports.login = async (req, res) => {
-  const { email, password } = req.body;
+  try {
+    const { email, password } = req.body;
 
-  const user = await User.findOne({ email });
-  if (!user || !(await bcrypt.compare(password, user.password)))
-    return res.status(401).json({ message: 'Invalid credentials' });
+    const user = await User.findOne({ email });
+    if (!user || !(await bcrypt.compare(password, user.password))) {
+      return res.status(401).json({ message: 'Invalid credentials' });
+    }
 
-  res.json({ token: generateToken(user._id) });
+    const token = generateToken(user._id);
+
+    res.json({
+      token,
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email
+      }
+    });
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ message: 'Server error during login' });
+  }
 };
 
 exports.logout = async (req, res) => {
-  res.json({ message: 'Logged out' });
+  res.json({ message: 'Logged out successfully' });
 };

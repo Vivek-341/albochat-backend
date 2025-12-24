@@ -1,5 +1,6 @@
+// middleware/socketAuth.js
 const jwt = require('jsonwebtoken');
-const User = require('../models/user.model');
+const User = require('../models/user-model');
 
 const socketAuth = async (socket, next) => {
   try {
@@ -23,8 +24,11 @@ const socketAuth = async (socket, next) => {
     socket.user = user;
     socket.userId = user._id.toString();
 
+    console.log(`Socket authenticated: ${user.username} (${user._id})`);
+
     next(); // allow connection
   } catch (err) {
+    console.error('Socket auth error:', err.message);
     next(new Error('Invalid or expired token'));
   }
 };

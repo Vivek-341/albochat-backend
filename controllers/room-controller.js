@@ -1,37 +1,76 @@
-const Room = require('../models/room.model');
+// controllers/room-controller.js
+const Room = require('../models/room-model');
 
 exports.createDMRoom = async (req, res) => {
-  const { userId } = req.body;
+  try {
+    const { userId } = req.body;
 
-  let room = await Room.findOne({
-    type: 'dm',
-    members: { $all: [req.user._id, userId], $size: 2 }
-  });
+    if (!userId) {
+      return res.status(400).json({ message: 'userId is required' });
+    }
 
-  if (!room) {
-    room = await Room.create({
+    // Check if DM room already exists
+    let room = await Room.findOne({
       type: 'dm',
-      members: [req.user._id, userId]
-    });
-  }
+      members: { $all: [req.user._id, userId], $size: 2 }
+    }).populate('members', 'username email');
 
-  res.json(room);
+    if (!room) {
+      room = await Room.create({
+        type: 'dm',
+        members: [req.user._id, userId]
+      });
+
+      // Populate after creation
+      room = await Room.findById(room._id).populate('members', 'username email');
+    }
+
+    res.status(201).json(room);
+  } catch (error) {
+    console.error('Create DM error:', error);
+    res.status(500).json({ message: 'Server error creating DM' });
+  }
 };
 
 exports.createGroupRoom = async (req, res) => {
-  const { name, members } = req.body;
+  try {
+    const { name, members } = req.body;
 
-  const room = await Room.create({
-    name,
-    type: 'group',
-    members,
-    admin: req.user._id
-  });
+    if (!name || !members || !Array.isArray(members)) {
+      return res.status(400).json({ message: 'name and members array are required' });
+    }
 
-  res.json(room);
+    // Include current user in members if not already included
+    const allMembers = members.includes(req.user._id.toString())
+      ? members
+      : [...members, req.user._id];
+
+    const room = await Room.create({
+      name,
+      type: 'group',
+      members: allMembers,
+      admin: req.user._id
+    });
+
+    // Populate members
+    const populatedRoom = await Room.findById(room._id).populate('members', 'username email');
+
+    res.status(201).json(populatedRoom);
+  } catch (error) {
+    console.error('Create group error:', error);
+    res.status(500).json({ message: 'Server error creating group' });
+  }
 };
 
 exports.getUserRooms = async (req, res) => {
-  const rooms = await Room.find({ members: req.user._id });
-  res.json(rooms);
+  try {
+    const rooms = await Room.find({ members: req.user._id })
+      .populate('members', 'username email')
+      .sort({ updatedAt: -1 });
+
+    res.json(rooms);
+  } catch (error) {
+    console.error('Get rooms error:', error);
+    res.status(500).json({ message: 'Server error fetching rooms' });
+  }
 };
