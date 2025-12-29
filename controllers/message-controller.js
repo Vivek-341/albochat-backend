@@ -38,7 +38,7 @@ exports.sendMessage = async (req, res) => {
 
     // Populate sender info before sending response
     const populatedMessage = await Message.findById(message._id)
-      .populate('senderId', 'username email');
+      .populate('senderId', 'username email isOnline lastSeen');
 
     res.status(201).json(populatedMessage);
   } catch (error) {
@@ -71,7 +71,7 @@ exports.getMessages = async (req, res) => {
         { expiresAt: { $gt: now } } // Public room messages not yet expired
       ]
     })
-      .populate('senderId', 'username email')
+      .populate('senderId', 'username email isOnline lastSeen')
       .sort({ createdAt: 1 }) // Ascending order (oldest first)
       .limit(100);
 

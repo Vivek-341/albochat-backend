@@ -5,8 +5,11 @@ const bcrypt = require('bcryptjs');
 // Get all public rooms (including default rooms)
 exports.getPublicRooms = async (req, res) => {
   try {
-    const publicRooms = await Room.find({ isPublic: true })
-      .populate('members', 'username email')
+    const publicRooms = await Room.find({
+      isPublic: true,
+      hiddenBy: { $ne: req.user._id }
+    })
+      .populate('members', 'username email isOnline lastSeen')
       .populate('admin', 'username email')
       .sort({ isDefault: -1, createdAt: -1 }); // Default rooms first
 
@@ -21,14 +24,20 @@ exports.getPublicRooms = async (req, res) => {
 exports.getUserRooms = async (req, res) => {
   try {
     // Public rooms visible to everyone
-    const publicRooms = await Room.find({ isPublic: true })
-      .populate('members', 'username email')
+    const publicRooms = await Room.find({
+      isPublic: true,
+      hiddenBy: { $ne: req.user._id }
+    })
+      .populate('members', 'username email isOnline lastSeen')
       .populate('admin', 'username email')
       .sort({ isDefault: -1, createdAt: -1 });
 
     // Rooms where user is a member (including private DMs and groups)
-    const memberRooms = await Room.find({ members: req.user._id })
-      .populate('members', 'username email')
+    const memberRooms = await Room.find({
+      members: req.user._id,
+      hiddenBy: { $ne: req.user._id }
+    })
+      .populate('members', 'username email isOnline lastSeen')
       .populate('admin', 'username email')
       .sort({ updatedAt: -1 });
 
@@ -43,6 +52,34 @@ exports.getUserRooms = async (req, res) => {
   } catch (error) {
     console.error('Get rooms error:', error);
     res.status(500).json({ message: 'Server error fetching rooms' });
+  }
+};
+
+// Hide Room
+exports.hideRoom = async (req, res) => {
+  try {
+    const { roomId } = req.params;
+    await Room.findByIdAndUpdate(roomId, {
+      $addToSet: { hiddenBy: req.user._id }
+    });
+    res.json({ message: 'Room hidden' });
+  } catch (error) {
+    console.error('Hide room error:', error);
+    res.status(500).json({ message: 'Server error hiding room' });
+  }
+};
+
+// Block DM
+exports.blockDM = async (req, res) => {
+  try {
+    const { roomId } = req.params;
+    await Room.findByIdAndUpdate(roomId, {
+      $addToSet: { blockedBy: req.user._id, hiddenBy: req.user._id },
+    });
+    res.json({ message: 'DM blocked' });
+  } catch (error) {
+    console.error('Block DM error:', error);
+    res.status(500).json({ message: 'Server error blocking DM' });
   }
 };
 
@@ -65,7 +102,9 @@ exports.createDMRoom = async (req, res) => {
       room = await Room.create({
         type: 'dm',
         isPublic: false, // DMs are always private
-        members: [req.user._id, userId]
+        members: [req.user._id, userId],
+        status: 'pending',
+        initiator: req.user._id
       });
 
       room = await Room.findById(room._id).populate('members', 'username email');
@@ -75,6 +114,57 @@ exports.createDMRoom = async (req, res) => {
   } catch (error) {
     console.error('Create DM error:', error);
     res.status(500).json({ message: 'Server error creating DM' });
+  }
+};
+
+// Accept DM Request
+exports.acceptDM = async (req, res) => {
+  try {
+    const { roomId } = req.body;
+
+    const room = await Room.findById(roomId);
+    if (!room) return res.status(404).json({ message: 'Room not found' });
+
+    // Authorization: Only non-initiator can accept
+    if (room.initiator.toString() === req.user._id.toString()) {
+      return res.status(400).json({ message: 'Cannot accept your own request' });
+    }
+
+    room.status = 'active';
+    await room.save();
+
+    const populatedRoom = await Room.findById(room._id)
+      .populate('members', 'username email');
+
+    res.json(populatedRoom);
+  } catch (error) {
+    console.error('Accept DM error:', error);
+    res.status(500).json({ message: 'Server error accepting DM' });
+  }
+};
+
+// Ignore/Reject DM Request
+exports.ignoreDM = async (req, res) => {
+  try {
+    const { roomId } = req.params;
+
+    const room = await Room.findById(roomId);
+    if (!room) return res.status(404).json({ message: 'Room not found' });
+
+    // Authorization: Member check
+    if (!room.members.includes(req.user._id)) {
+      return res.status(403).json({ message: 'Not authorized' });
+    }
+
+    await Room.findByIdAndDelete(roomId);
+    // Also delete messages just in case any were sent (unlikely if pending, but safe cleanup)
+    const Message = require('../models/message-model');
+    await Message.deleteMany({ roomId: roomId });
+
+    res.json({ message: 'Request ignored' });
+  } catch (error) {
+    console.error('Ignore DM error:', error);
+    res.status(500).json({ message: 'Server error ignoring DM' });
   }
 };
 
@@ -166,6 +256,11 @@ exports.joinPrivateRoom = async (req, res) => {
       return res.status(400).json({ message: 'roomId and password are required' });
     }
 
+    // Validate ObjectId format
+    if (!require('mongoose').Types.ObjectId.isValid(roomId)) {
+      return res.status(400).json({ message: 'Invalid Room ID format' });
+    }
+
     // Find room
     const room = await Room.findById(roomId);
 
@@ -216,6 +311,11 @@ exports.joinPublicRoom = async (req, res) => {
       return res.status(400).json({ message: 'roomId is required' });
     }
 
+    // Validate ObjectId format
+    if (!require('mongoose').Types.ObjectId.isValid(roomId)) {
+      return res.status(400).json({ message: 'Invalid Room ID format' });
+    }
+
     const room = await Room.findById(roomId);
 
     if (!room) {
@@ -246,5 +346,42 @@ exports.joinPublicRoom = async (req, res) => {
   } catch (error) {
     console.error('Join public room error:', error);
     res.status(500).json({ message: 'Server error joining public room' });
+  }
+};
+
+// Delete room (and all its messages)
+exports.deleteRoom = async (req, res) => {
+  try {
+    const { roomId } = req.params;
+
+    // Validate ObjectId format
+    if (!require('mongoose').Types.ObjectId.isValid(roomId)) {
+      return res.status(400).json({ message: 'Invalid Room ID format' });
+    }
+
+    const room = await Room.findById(roomId);
+
+    if (!room) {
+      return res.status(404).json({ message: 'Room not found' });
+    }
+
+    // Check authorization (only admin can delete)
+    // Note: room.admin is usually an ObjectId, but if populated it might be an object
+    const adminId = room.admin._id ? room.admin._id.toString() : room.admin.toString();
+    if (adminId !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'Not authorized to delete this room' });
+    }
+
+    // Delete all messages in the room
+    const Message = require('../models/message-model');
+    await Message.deleteMany({ roomId: roomId });
+
+    // Delete the room
+    await Room.findByIdAndDelete(roomId);
+
+    res.json({ message: 'Room and all messages deleted successfully' });
+  } catch (error) {
+    console.error('Delete room error:', error);
+    res.status(500).json({ message: 'Server error deleting room' });
   }
 };

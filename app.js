@@ -13,6 +13,8 @@ const seedDefaultRooms = require('./utils/seedDefaultRooms');
 const authRoutes = require('./routes/auth-routes');
 const roomRoutes = require('./routes/room-routes');
 const messageRoutes = require('./routes/message-routes');
+const userRoutes = require('./routes/user-routes');
+const friendRoutes = require('./routes/friend-routes');
 
 // Socket auth middleware
 const socketAuth = require('./middleware/socketAuth');
@@ -88,6 +90,8 @@ connectDB().then(() => {
 app.use('/api/auth', authRoutes);
 app.use('/api/rooms', roomRoutes);
 app.use('/api/messages', messageRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/friends', friendRoutes);
 
 app.get('/health', (req, res) => {
   res.json({ ok: true, message: 'Server is running' });
@@ -115,7 +119,12 @@ io.on('connection', (socket) => {
 
   // Mark user online
   socket.user.isOnline = true;
-  socket.user.save().catch(err => console.error('Error updating user online status:', err));
+  socket.user.save().then(() => {
+    io.emit('user_status_change', {
+      userId: socket.userId,
+      isOnline: true
+    });
+  }).catch(err => console.error('Error updating user online status:', err));
 
   /* Join a room */
   socket.on('join_room', ({ roomId }) => {
@@ -163,7 +172,7 @@ io.on('connection', (socket) => {
 
       // Populate sender info before emitting
       const populatedMessage = await Message.findById(message._id)
-        .populate('senderId', 'username email');
+        .populate('senderId', 'username email isOnline lastSeen');
 
       // Emit to all users in the room (including sender)
       io.to(roomId).emit('new_message', populatedMessage);
@@ -181,6 +190,12 @@ io.on('connection', (socket) => {
       socket.user.isOnline = false;
       socket.user.lastSeen = new Date();
       await socket.user.save();
+
+      io.emit('user_status_change', {
+        userId: socket.userId,
+        isOnline: false,
+        lastSeen: socket.user.lastSeen
+      });
 
       console.log(`❌ Socket disconnected: ${socket.user.username}`);
     } catch (err) {

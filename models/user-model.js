@@ -6,7 +6,10 @@ const userSchema = new mongoose.Schema(
     email: { type: String, required: true, unique: true },
     password: { type: String, required: true },
     isOnline: { type: Boolean, default: false },
-    lastSeen: { type: Date }
+    lastSeen: { type: Date },
+    friends: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+    friendRequests: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }], // Incoming requests
+    sentFriendRequests: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }] // Outgoing requests
   },
   { timestamps: true }
 );

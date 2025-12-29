@@ -10,7 +10,15 @@ const roomSchema = new mongoose.Schema(
     admin: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     isPublic: { type: Boolean, default: true },
     password: { type: String }, // Hashed password for private rooms
-    isDefault: { type: Boolean, default: false } // For default public rooms
+    isDefault: { type: Boolean, default: false }, // For default public rooms
+
+    // DM Request Logic
+    status: { type: String, enum: ['active', 'pending'], default: 'active' },
+    initiator: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+
+    // Privacy & Actions
+    hiddenBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+    blockedBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }]
   },
   { timestamps: true }
 );
