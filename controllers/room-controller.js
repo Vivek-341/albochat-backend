@@ -20,12 +20,26 @@ exports.getPublicRooms = async (req, res) => {
 // Get user's rooms (DMs + joined groups)
 exports.getUserRooms = async (req, res) => {
   try {
-    const rooms = await Room.find({ members: req.user._id })
+    // Public rooms visible to everyone
+    const publicRooms = await Room.find({ isPublic: true })
+      .populate('members', 'username email')
+      .populate('admin', 'username email')
+      .sort({ isDefault: -1, createdAt: -1 });
+
+    // Rooms where user is a member (including private DMs and groups)
+    const memberRooms = await Room.find({ members: req.user._id })
       .populate('members', 'username email')
       .populate('admin', 'username email')
       .sort({ updatedAt: -1 });
 
-    res.json(rooms);
+    // Combine and deduplicate by _id - ensure user's private rooms are included
+    const map = new Map();
+    for (const r of publicRooms) map.set(String(r._id), r);
+    for (const r of memberRooms) map.set(String(r._id), r);
+
+    const combined = Array.from(map.values());
+
+    res.json(combined);
   } catch (error) {
     console.error('Get rooms error:', error);
     res.status(500).json({ message: 'Server error fetching rooms' });

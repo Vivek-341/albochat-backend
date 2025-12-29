@@ -33,6 +33,47 @@ app.use(cors({
   credentials: true
 }));
 
+// Basic security headers (minimal replacement for helmet to avoid extra deps)
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  next();
+});
+
+// Simple in-memory rate limiter (per IP) - suitable for dev/small scale
+const rateWindowMs = 60 * 1000; // 1 minute
+const maxRequestsPerWindow = 120;
+const ipHits = new Map();
+app.use((req, res, next) => {
+  try {
+    const ip = req.ip || req.connection.remoteAddress || 'unknown';
+    const now = Date.now();
+    const entry = ipHits.get(ip) || { count: 0, start: now };
+
+    if (now - entry.start > rateWindowMs) {
+      // reset
+      entry.count = 1;
+      entry.start = now;
+    } else {
+      entry.count++;
+    }
+
+    ipHits.set(ip, entry);
+
+    if (entry.count > maxRequestsPerWindow) {
+      res.status(429).json({ message: 'Too many requests - try again later' });
+      return;
+    }
+
+    next();
+  } catch (err) {
+    next();
+  }
+});
+
 /* =======================
    Database Connection
 ======================= */

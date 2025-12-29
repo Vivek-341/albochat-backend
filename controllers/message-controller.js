@@ -10,10 +10,16 @@ exports.sendMessage = async (req, res) => {
       return res.status(400).json({ message: 'roomId and content are required' });
     }
 
-    // Get room to check if it's public
+    // Get room and enforce access control
     const room = await Room.findById(roomId);
     if (!room) {
       return res.status(404).json({ message: 'Room not found' });
+    }
+
+    // If room is private, ensure user is a member
+    if (!room.isPublic) {
+      const isMember = room.members.map(m => String(m)).includes(String(req.user._id));
+      if (!isMember) return res.status(403).json({ message: 'Forbidden - not a member of this private room' });
     }
 
     // Calculate expiration for public rooms (24 hours from now)
@@ -48,6 +54,15 @@ exports.getMessages = async (req, res) => {
     // Only fetch messages that haven't expired
     // MongoDB TTL will delete expired messages, but we add this as extra safety
     const now = new Date();
+
+    // Ensure access: if private room, user must be member
+    const room = await Room.findById(roomId);
+    if (!room) return res.status(404).json({ message: 'Room not found' });
+
+    if (!room.isPublic) {
+      const isMember = room.members.map(m => String(m)).includes(String(req.user._id));
+      if (!isMember) return res.status(403).json({ message: 'Forbidden - not a member of this private room' });
+    }
 
     const messages = await Message.find({
       roomId,

@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const roomSchema = new mongoose.Schema(
   {
     name: String,
+    description: String,
     type: { type: String, enum: ['dm', 'group'], required: true },
     members: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
     admin: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
