@@ -9,7 +9,8 @@ const messageSchema = new mongoose.Schema(
     reactions: [
       { userId: mongoose.Schema.Types.ObjectId, emoji: String }
     ],
-    seenBy: [{ type: mongoose.Schema.Types.ObjectId }],
+    seenBy: [{ type: mongoose.Schema.Types.ObjectId }], // Legacy field, keeping if needed
+    readBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }], // New field for unread counts
     expiresAt: { type: Date } // For ephemeral messages in public rooms
   },
   { timestamps: true }

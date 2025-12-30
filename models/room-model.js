@@ -18,7 +18,8 @@ const roomSchema = new mongoose.Schema(
 
     // Privacy & Actions
     hiddenBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
-    blockedBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }]
+    blockedBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+    bannedUsers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }] // Banned users
   },
   { timestamps: true }
 );

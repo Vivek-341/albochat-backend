@@ -28,12 +28,17 @@ const server = http.createServer(app);
 
 /* =======================
    Express Middlewares
-======================= */
-app.use(express.json());
+   ======================= */
+const cookieParser = require('cookie-parser');
+
+// CORS - Allow credentials for cookie-based auth
 app.use(cors({
   origin: process.env.CORS_ORIGIN || 'http://localhost:4200',
   credentials: true
 }));
+
+app.use(express.json());
+app.use(cookieParser()); // Parse cookies
 
 // Basic security headers (minimal replacement for helmet to avoid extra deps)
 app.use((req, res, next) => {
@@ -114,8 +119,14 @@ io.use(socketAuth);
 /* =======================
    Socket Events
 ======================= */
+/* =======================
+   Socket Events
+======================= */
 io.on('connection', (socket) => {
   console.log(`✅ Socket connected: ${socket.user.username} (${socket.userId})`);
+
+  // JOIN USER PERSONAL CHANNEL for notifications
+  socket.join(socket.userId);
 
   // Mark user online
   socket.user.isOnline = true;
@@ -127,10 +138,20 @@ io.on('connection', (socket) => {
   }).catch(err => console.error('Error updating user online status:', err));
 
   /* Join a room */
-  socket.on('join_room', ({ roomId }) => {
+  socket.on('join_room', async ({ roomId }) => {
     if (!roomId) return;
     socket.join(roomId);
     console.log(`📥 ${socket.user.username} joined room: ${roomId}`);
+
+    // Mark messages as read
+    try {
+      await Message.updateMany(
+        { roomId: roomId, readBy: { $ne: socket.userId } },
+        { $addToSet: { readBy: socket.userId } }
+      );
+    } catch (err) {
+      console.error('Error marking messages as read on join:', err);
+    }
   });
 
   /* Leave a room */
@@ -148,7 +169,7 @@ io.on('connection', (socket) => {
         return;
       }
 
-      // Get room to check if it's public
+      // Get room to check if it's public and get members
       const room = await Room.findById(roomId);
       if (!room) {
         console.error('Room not found');
@@ -167,15 +188,30 @@ io.on('connection', (socket) => {
         roomId,
         senderId: socket.userId,
         content,
-        expiresAt
+        expiresAt,
+        readBy: [socket.userId] // Sender has read the message
       });
 
       // Populate sender info before emitting
       const populatedMessage = await Message.findById(message._id)
         .populate('senderId', 'username email isOnline lastSeen');
 
-      // Emit to all users in the room (including sender)
+      // Emit to all users in the room (including sender) - FOR ACTIVE CHAT
       io.to(roomId).emit('new_message', populatedMessage);
+
+      // Emit NOTIFICATION to all members (for unread counts)
+      // Only emit if they are NOT the sender
+      if (room.members && room.members.length > 0) {
+        room.members.forEach(memberId => {
+          if (memberId.toString() !== socket.userId) {
+            io.to(memberId.toString()).emit('room_message_update', {
+              roomId: room._id,
+              message: populatedMessage,
+              unreadIncrement: 1
+            });
+          }
+        });
+      }
 
       console.log(`💬 Message sent in room ${roomId} by ${socket.user.username}${room.isPublic ? ' (expires in 24h)' : ''}`);
     } catch (err) {

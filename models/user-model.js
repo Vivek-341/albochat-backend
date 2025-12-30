@@ -9,7 +9,10 @@ const userSchema = new mongoose.Schema(
     lastSeen: { type: Date },
     friends: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
     friendRequests: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }], // Incoming requests
-    sentFriendRequests: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }] // Outgoing requests
+    sentFriendRequests: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }], // Outgoing requests
+    isVerified: { type: Boolean, default: false },
+    otp: { type: String },
+    otpExpires: { type: Date }
   },
   { timestamps: true }
 );

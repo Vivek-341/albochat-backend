@@ -29,6 +29,10 @@ router.post('/dm/accept', protect, ctrl.acceptDM);
 router.delete('/dm/:roomId', protect, ctrl.ignoreDM); // Used for reject/ignore request
 router.put('/:roomId/hide', protect, ctrl.hideRoom);
 router.put('/:roomId/block', protect, ctrl.blockDM);
+router.post('/:roomId/read', protect, ctrl.markRead); // New endpoint for marking room as read
+
+router.post('/:roomId/kick', protect, ctrl.kickMember);
+router.post('/:roomId/ban', protect, ctrl.banMember);
 
 router.post('/group', protect, ctrl.createGroupRoom);
 

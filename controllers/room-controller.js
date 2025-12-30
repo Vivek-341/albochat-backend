@@ -1,8 +1,9 @@
 // controllers/room-controller.js
 const Room = require('../models/room-model');
+const Message = require('../models/message-model');
 const bcrypt = require('bcryptjs');
 
-// Get all public rooms (including default rooms)
+// Get all public rooms (Only Public)
 exports.getPublicRooms = async (req, res) => {
   try {
     const publicRooms = await Room.find({
@@ -13,42 +14,49 @@ exports.getPublicRooms = async (req, res) => {
       .populate('admin', 'username email')
       .sort({ isDefault: -1, createdAt: -1 }); // Default rooms first
 
-    res.json(publicRooms);
+    // Attach unread count
+    const roomsWithCount = await Promise.all(publicRooms.map(async (room) => {
+      const count = await Message.countDocuments({
+        roomId: room._id,
+        readBy: { $ne: req.user._id }
+      });
+      return { ...room.toObject(), unreadCount: count };
+    }));
+
+    res.json(roomsWithCount);
   } catch (error) {
     console.error('Get public rooms error:', error);
     res.status(500).json({ message: 'Server error fetching public rooms' });
   }
 };
 
-// Get user's rooms (DMs + joined groups)
+// Get user's rooms (ONLY Private Joined + DMs)
 exports.getUserRooms = async (req, res) => {
   try {
-    // Public rooms visible to everyone
-    const publicRooms = await Room.find({
-      isPublic: true,
-      hiddenBy: { $ne: req.user._id }
-    })
-      .populate('members', 'username email isOnline lastSeen')
-      .populate('admin', 'username email')
-      .sort({ isDefault: -1, createdAt: -1 });
+    // "My Rooms" must show ONLY:
+    // - Private rooms the user has joined
+    // - DM rooms the user is part of
+    // - Public rooms must NEVER appear here
 
-    // Rooms where user is a member (including private DMs and groups)
     const memberRooms = await Room.find({
       members: req.user._id,
+      isPublic: false, // STRICT FILTER: No public rooms
       hiddenBy: { $ne: req.user._id }
     })
       .populate('members', 'username email isOnline lastSeen')
       .populate('admin', 'username email')
       .sort({ updatedAt: -1 });
 
-    // Combine and deduplicate by _id - ensure user's private rooms are included
-    const map = new Map();
-    for (const r of publicRooms) map.set(String(r._id), r);
-    for (const r of memberRooms) map.set(String(r._id), r);
+    // Attach unread count
+    const roomsWithCount = await Promise.all(memberRooms.map(async (room) => {
+      const count = await Message.countDocuments({
+        roomId: room._id,
+        readBy: { $ne: req.user._id }
+      });
+      return { ...room.toObject(), unreadCount: count };
+    }));
 
-    const combined = Array.from(map.values());
-
-    res.json(combined);
+    res.json(roomsWithCount);
   } catch (error) {
     console.error('Get rooms error:', error);
     res.status(500).json({ message: 'Server error fetching rooms' });
@@ -268,6 +276,11 @@ exports.joinPrivateRoom = async (req, res) => {
       return res.status(404).json({ message: 'Room not found' });
     }
 
+    // Ban Check
+    if (room.bannedUsers && room.bannedUsers.includes(req.user._id)) {
+      return res.status(403).json({ message: 'You have been banned from this room.' });
+    }
+
     // Check if room is private
     if (room.isPublic) {
       return res.status(400).json({ message: 'This is a public room, no password needed' });
@@ -322,6 +335,11 @@ exports.joinPublicRoom = async (req, res) => {
       return res.status(404).json({ message: 'Room not found' });
     }
 
+    // Ban Check
+    if (room.bannedUsers && room.bannedUsers.includes(req.user._id)) {
+      return res.status(403).json({ message: 'You have been banned from this room.' });
+    }
+
     if (!room.isPublic) {
       return res.status(400).json({ message: 'This is a private room, password required' });
     }
@@ -365,10 +383,21 @@ exports.deleteRoom = async (req, res) => {
       return res.status(404).json({ message: 'Room not found' });
     }
 
-    // Check authorization (only admin can delete)
-    // Note: room.admin is usually an ObjectId, but if populated it might be an object
-    const adminId = room.admin._id ? room.admin._id.toString() : room.admin.toString();
-    if (adminId !== req.user._id.toString()) {
+    // Authorization logic:
+    // - For DMs: any participant can delete
+    // - For group rooms: only admin can delete
+    let isAuthorized = false;
+
+    if (room.type === 'dm') {
+      // Check if user is a member of this DM
+      isAuthorized = room.members.some(memberId => memberId.toString() === req.user._id.toString());
+    } else {
+      // For group rooms, only admin can delete
+      const adminId = room.admin._id ? room.admin._id.toString() : room.admin.toString();
+      isAuthorized = adminId === req.user._id.toString();
+    }
+
+    if (!isAuthorized) {
       return res.status(403).json({ message: 'Not authorized to delete this room' });
     }
 
@@ -383,5 +412,84 @@ exports.deleteRoom = async (req, res) => {
   } catch (error) {
     console.error('Delete room error:', error);
     res.status(500).json({ message: 'Server error deleting room' });
+  }
+};
+
+// Mark Room Read
+exports.markRead = async (req, res) => {
+  try {
+    const { roomId } = req.params;
+    const userId = req.user._id;
+
+    await Message.updateMany(
+      { roomId: roomId, readBy: { $ne: userId } },
+      { $addToSet: { readBy: userId } }
+    );
+
+    res.json({ message: 'Room marked as read' });
+  } catch (error) {
+    console.error('Mark read error:', error);
+    res.status(500).json({ message: 'Server error marking read' });
+  }
+};
+
+// Kick Member (Admin Only)
+exports.kickMember = async (req, res) => {
+  try {
+    const { roomId, userId } = req.body;
+
+    const room = await Room.findById(roomId);
+    if (!room) return res.status(404).json({ message: 'Room not found' });
+
+    // Check if requester is admin
+    const adminId = room.admin._id ? room.admin._id.toString() : room.admin.toString();
+    if (adminId !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'Only admin can kick members' });
+    }
+
+    // Remove user from members
+    room.members = room.members.filter(m => m.toString() !== userId);
+    await room.save();
+
+    const populatedRoom = await Room.findById(room._id)
+      .populate('members', 'username email isOnline lastSeen')
+      .populate('admin', 'username email');
+
+    res.json(populatedRoom);
+  } catch (error) {
+    console.error('Kick member error:', error);
+    res.status(500).json({ message: 'Server error kicking member' });
+  }
+};
+
+// Ban Member (Admin Only)
+exports.banMember = async (req, res) => {
+  try {
+    const { roomId, userId } = req.body;
+
+    const room = await Room.findById(roomId);
+    if (!room) return res.status(404).json({ message: 'Room not found' });
+
+    // Check if requester is admin
+    const adminId = room.admin._id ? room.admin._id.toString() : room.admin.toString();
+    if (adminId !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'Only admin can ban members' });
+    }
+
+    // Remove user from members AND add to bannedUsers
+    room.members = room.members.filter(m => m.toString() !== userId);
+    if (!room.bannedUsers.includes(userId)) {
+      room.bannedUsers.push(userId);
+    }
+    await room.save();
+
+    const populatedRoom = await Room.findById(room._id)
+      .populate('members', 'username email isOnline lastSeen')
+      .populate('admin', 'username email');
+
+    res.json(populatedRoom);
+  } catch (error) {
+    console.error('Ban member error:', error);
+    res.status(500).json({ message: 'Server error banning member' });
   }
 };

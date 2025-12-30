@@ -24,3 +24,12 @@ exports.searchUsers = async (req, res) => {
         res.status(500).json({ message: 'Server error searching users' });
     }
 };
+exports.getProfile = async (req, res) => {
+    try {
+        const user = req.user;
+        res.json(user);
+    } catch (error) {
+        console.error('Get profile error:', error);
+        res.status(500).json({ message: 'Server error getting profile' });
+    }
+};
